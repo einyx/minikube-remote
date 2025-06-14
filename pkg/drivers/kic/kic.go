@@ -186,14 +186,25 @@ func (d *Driver) Create() error {
 	var pErr error
 	go func() {
 		defer waitForPreload.Done()
+		// Detect target architecture for preload
+		arch := runtime.GOARCH
+		if d.NodeConfig.OCIBinary == oci.Docker {
+			if daemonArch, err := oci.DaemonArch(oci.Docker); err != nil {
+				klog.Warningf("Failed to detect Docker daemon architecture, using local arch: %v", err)
+			} else {
+				arch = daemonArch
+				klog.Infof("Detected Docker daemon architecture for preload: %s", arch)
+			}
+		}
+		
 		// If preload doesn't exist, don't bother extracting tarball to volume
-		if !download.PreloadExists(d.NodeConfig.KubernetesVersion, d.NodeConfig.ContainerRuntime, d.DriverName()) {
+		if !download.PreloadExistsWithArch(d.NodeConfig.KubernetesVersion, d.NodeConfig.ContainerRuntime, d.DriverName(), arch) {
 			return
 		}
 		t := time.Now()
 		klog.Infof("Starting extracting preloaded images to volume ...")
 		// Extract preloaded images to container
-		if err := oci.ExtractTarballToVolume(d.NodeConfig.OCIBinary, download.TarballPath(d.NodeConfig.KubernetesVersion, d.NodeConfig.ContainerRuntime), params.Name, d.NodeConfig.ImageDigest); err != nil {
+		if err := oci.ExtractTarballToVolume(d.NodeConfig.OCIBinary, download.TarballPathWithArch(d.NodeConfig.KubernetesVersion, d.NodeConfig.ContainerRuntime, arch), params.Name, d.NodeConfig.ImageDigest); err != nil {
 			if strings.Contains(err.Error(), "No space left on device") {
 				pErr = oci.ErrInsufficientDockerStorage
 				return
@@ -212,8 +223,52 @@ func (d *Driver) Create() error {
 		return errors.Wrap(err, "create kic node")
 	}
 
+	// For remote Docker contexts with SSH, establish SSH tunnel immediately after container creation
+	if oci.IsRemoteDockerContext() && oci.IsSSHDockerContext() {
+		klog.Infof("Setting up SSH tunnel for remote Docker container %s", d.MachineName)
+		tunnelPort, err := oci.EstablishSSHTunnelForContainer(d.MachineName, constants.SSHPort)
+		if err != nil {
+			klog.Warningf("Failed to establish SSH tunnel for container %s: %v", d.MachineName, err)
+			// Don't fail here, as the tunnel might be established later
+		} else {
+			klog.Infof("SSH tunnel established for container %s: localhost:%d", d.MachineName, tunnelPort)
+		}
+	}
+
 	if err := d.prepareSSH(); err != nil {
 		return errors.Wrap(err, "prepare kic ssh")
+	}
+
+	// Setup SSH proxy configuration for remote Docker contexts
+	if oci.IsRemoteDockerContext() {
+		sshPort, err := oci.ForwardedPort(d.OCIBinary, d.MachineName, constants.SSHPort)
+		if err != nil {
+			return errors.Wrap(err, "get SSH port")
+		}
+		if err := oci.WriteSSHProxyConfig(d.MachineName, sshPort); err != nil {
+			return errors.Wrap(err, "write SSH proxy config")
+		}
+		
+		// Setup automatic API server tunnel for SSH contexts
+		if oci.IsSSHDockerContext() {
+			ctx, err := oci.GetCurrentContext()
+			if err != nil {
+				klog.Warningf("Failed to get Docker context for tunnel setup: %v", err)
+			} else {
+				apiServerPort, err := oci.ForwardedPort(d.OCIBinary, d.MachineName, constants.APIServerPort)
+				if err != nil {
+					klog.Warningf("Failed to get API server port for tunnel: %v", err)
+				} else {
+					tm := oci.GetTunnelManager()
+					tunnel, err := tm.CreateAPIServerTunnel(ctx, apiServerPort)
+					if err != nil {
+						klog.Warningf("Failed to create API server tunnel: %v", err)
+					} else {
+						klog.Infof("API server tunnel created automatically: localhost:%d -> %s:%d", tunnel.LocalPort, tunnel.SSHHost, apiServerPort)
+					}
+				}
+			}
+		}
 	}
 
 	return nil
@@ -304,11 +359,16 @@ func (d *Driver) GetExternalIP() (string, error) {
 
 // GetSSHHostname returns hostname for use with ssh
 func (d *Driver) GetSSHHostname() (string, error) {
+	// For remote Docker contexts with SSH tunneling, always use localhost
+	if oci.IsRemoteDockerContext() {
+		return "127.0.0.1", nil
+	}
 	return oci.DaemonHost(d.DriverName()), nil
 }
 
 // GetSSHPort returns port for use with ssh
 func (d *Driver) GetSSHPort() (int, error) {
+	// Always get the actual port mapping, even for remote contexts
 	p, err := oci.ForwardedPort(d.OCIBinary, d.MachineName, constants.SSHPort)
 	if err != nil {
 		return p, errors.Wrap(err, "get ssh host-port")
@@ -358,6 +418,11 @@ func (d *Driver) Kill() error {
 		klog.Warningf("couldn't shutdown the container, will continue with kill anyways: %v", err)
 	}
 
+	// Clean up any SSH tunnels for remote Docker contexts
+	if oci.IsRemoteDockerContext() {
+		oci.CleanupContainerTunnels()
+	}
+
 	cr := command.NewExecRunner(false) // using exec runner for interacting with daemon.
 	if _, err := cr.RunCmd(oci.PrefixCmd(exec.Command(d.NodeConfig.OCIBinary, "kill", d.MachineName))); err != nil {
 		return errors.Wrapf(err, "killing %q", d.MachineName)
@@ -369,6 +434,11 @@ func (d *Driver) Kill() error {
 func (d *Driver) Remove() error {
 	if _, err := oci.ContainerID(d.OCIBinary, d.MachineName); err != nil {
 		klog.Infof("could not find the container %s to remove it. will try anyways", d.MachineName)
+	}
+
+	// Clean up any SSH tunnels for remote Docker contexts
+	if oci.IsRemoteDockerContext() {
+		oci.CleanupContainerTunnels()
 	}
 
 	if err := oci.DeleteContainer(context.Background(), d.NodeConfig.OCIBinary, d.MachineName); err != nil {
@@ -440,6 +510,36 @@ func (d *Driver) Start() error {
 
 		return errors.Wrapf(oci.ErrExitedUnexpectedly, "container name %q: log: %s", d.MachineName, excerpt)
 	}
+	
+	// Setup SSH tunnel for remote Docker contexts after container is running
+	if oci.IsRemoteDockerContext() && oci.IsSSHDockerContext() {
+		_, err := oci.EstablishSSHTunnelForContainer(d.MachineName, constants.SSHPort)
+		if err != nil {
+			klog.Warningf("Failed to establish SSH tunnel on Start: %v", err)
+		} else {
+			klog.Infof("SSH tunnel established for container %s on restart", d.MachineName)
+		}
+		
+		// Also re-establish API server tunnel if needed
+		apiServerPort, err := oci.ForwardedPort(d.OCIBinary, d.MachineName, constants.APIServerPort)
+		if err != nil {
+			klog.Warningf("Failed to get API server port for tunnel: %v", err)
+		} else {
+			ctx, err := oci.GetCurrentContext()
+			if err != nil {
+				klog.Warningf("Failed to get Docker context for tunnel setup: %v", err)
+			} else {
+				tm := oci.GetTunnelManager()
+				tunnel, err := tm.CreateAPIServerTunnel(ctx, apiServerPort)
+				if err != nil {
+					klog.Warningf("Failed to create API server tunnel on restart: %v", err)
+				} else {
+					klog.Infof("API server tunnel re-established on restart: localhost:%d -> %s:%d", tunnel.LocalPort, tunnel.SSHHost, apiServerPort)
+				}
+			}
+		}
+	}
+	
 	return nil
 }
 

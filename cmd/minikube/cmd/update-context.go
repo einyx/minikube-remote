@@ -17,7 +17,11 @@ limitations under the License.
 package cmd
 
 import (
+	"strconv"
+
 	"github.com/spf13/cobra"
+	"k8s.io/klog/v2"
+	"k8s.io/minikube/pkg/drivers/kic/oci"
 	"k8s.io/minikube/pkg/minikube/exit"
 	"k8s.io/minikube/pkg/minikube/kubeconfig"
 	"k8s.io/minikube/pkg/minikube/mustload"
@@ -35,14 +39,52 @@ var updateContextCmd = &cobra.Command{
 	Run: func(_ *cobra.Command, _ []string) {
 		cname := ClusterFlagValue()
 		co := mustload.Running(cname)
-		//	cluster extension metada for kubeconfig
 
-		updated, err := kubeconfig.UpdateEndpoint(cname, co.CP.Hostname, co.CP.Port, kubeconfig.PathFromEnv(), kubeconfig.NewExtension())
+		// Determine the endpoint to use (with SSH tunnel if needed)
+		hostname := co.CP.Hostname
+		port := co.CP.Port
+
+		// Check if we need SSH tunneling for remote Docker contexts
+		if oci.IsRemoteDockerContext() && oci.IsSSHDockerContext() {
+			klog.Infof("Remote SSH Docker context detected, setting up API server tunnel")
+			
+			// Set up SSH tunnel for API server access
+			tunnelEndpoint, cleanup, err := oci.SetupAPIServerTunnel(co.CP.Port)
+			if err != nil {
+				klog.Warningf("Failed to setup SSH tunnel, falling back to direct connection: %v", err)
+			} else if tunnelEndpoint != "" {
+				// Parse the tunnel endpoint to get localhost and tunnel port
+				hostname = "localhost"
+				// Extract port from tunnelEndpoint (format: https://localhost:PORT)
+				if len(tunnelEndpoint) > 19 { // len("https://localhost:")
+					portStr := tunnelEndpoint[19:] // Skip "https://localhost:"
+					if tunneledPort, parseErr := strconv.Atoi(portStr); parseErr == nil {
+						port = tunneledPort
+						klog.Infof("Using SSH tunnel: %s -> %s:%d", tunnelEndpoint, co.CP.Hostname, co.CP.Port)
+						
+						// Set up cleanup when the process exits
+						defer func() {
+							klog.Infof("Cleaning up SSH tunnel")
+							cleanup()
+						}()
+					}
+				}
+			}
+		}
+
+		updated, err := kubeconfig.UpdateEndpoint(cname, hostname, port, kubeconfig.PathFromEnv(), kubeconfig.NewExtension())
 		if err != nil {
 			exit.Error(reason.HostKubeconfigUpdate, "update config", err)
 		}
+		
 		if updated {
-			out.Step(style.Celebrate, `"{{.context}}" context has been updated to point to {{.hostname}}:{{.port}}`, out.V{"context": cname, "hostname": co.CP.Hostname, "port": co.CP.Port})
+			if hostname == "localhost" && oci.IsRemoteDockerContext() {
+				out.Step(style.Celebrate, `"{{.context}}" context has been updated to point to {{.hostname}}:{{.port}} (SSH tunnel to {{.original}})`, 
+					out.V{"context": cname, "hostname": hostname, "port": port, "original": co.CP.Hostname + ":" + strconv.Itoa(co.CP.Port)})
+			} else {
+				out.Step(style.Celebrate, `"{{.context}}" context has been updated to point to {{.hostname}}:{{.port}}`, 
+					out.V{"context": cname, "hostname": hostname, "port": port})
+			}
 		} else {
 			out.Styled(style.Meh, `No changes required for the "{{.context}}" context`, out.V{"context": cname})
 		}

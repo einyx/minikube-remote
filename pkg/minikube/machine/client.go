@@ -45,6 +45,7 @@ import (
 	"k8s.io/klog/v2"
 	"k8s.io/minikube/pkg/minikube/command"
 	"k8s.io/minikube/pkg/minikube/driver"
+	"k8s.io/minikube/pkg/drivers/kic/oci"
 	"k8s.io/minikube/pkg/minikube/exit"
 	"k8s.io/minikube/pkg/minikube/localpath"
 	"k8s.io/minikube/pkg/minikube/out"
@@ -159,7 +160,14 @@ func CommandRunner(h *host.Host) (command.Runner, error) {
 	if driver.BareMetal(h.Driver.DriverName()) {
 		return command.NewExecRunner(true), nil
 	}
+	
+	// For Docker driver with remote context, use docker exec instead of SSH
+	if h.DriverName == driver.Docker && oci.IsRemoteDockerContext() {
+		klog.Infof("Using DockerExecRunner for remote Docker context (container: %s)", h.Name)
+		return command.NewDockerExecRunner(h.Name), nil
+	}
 
+	klog.Infof("Using SSHRunner for driver: %s", h.DriverName)
 	return command.NewSSHRunner(h.Driver), nil
 }
 

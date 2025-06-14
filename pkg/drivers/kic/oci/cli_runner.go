@@ -133,8 +133,35 @@ func suppressDockerMessage() bool {
 	return suppress
 }
 
+// prepareDockerContextCmd prepares a Docker command with context environment
+func prepareDockerContextCmd(cmd *exec.Cmd) *exec.Cmd {
+	if cmd.Args[0] != Docker {
+		return cmd // Only apply to Docker commands
+	}
+
+	// Get Docker context environment
+	contextEnv, err := GetContextEnvironment()
+	if err != nil {
+		klog.Warningf("Failed to get Docker context environment: %v", err)
+		return cmd
+	}
+
+	// Apply context environment to command
+	if len(contextEnv) > 0 {
+		if cmd.Env == nil {
+			cmd.Env = os.Environ()
+		}
+		for key, value := range contextEnv {
+			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", key, value))
+		}
+	}
+
+	return cmd
+}
+
 // runCmd runs a command exec.Command against docker daemon or podman
 func runCmd(cmd *exec.Cmd, warnSlow ...bool) (*RunResult, error) {
+	cmd = prepareDockerContextCmd(cmd)
 	cmd = PrefixCmd(cmd)
 
 	warn := false

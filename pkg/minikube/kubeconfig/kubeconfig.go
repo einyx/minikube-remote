@@ -29,6 +29,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd/api"
 	"k8s.io/client-go/tools/clientcmd/api/latest"
 	"k8s.io/klog/v2"
+	"k8s.io/minikube/pkg/drivers/kic/oci"
 	"k8s.io/minikube/pkg/minikube/constants"
 	"k8s.io/minikube/pkg/minikube/localpath"
 	pkgutil "k8s.io/minikube/pkg/util"
@@ -97,6 +98,16 @@ func VerifyEndpoint(contextName string, host string, port int, configPath string
 	gotHost, gotPort, err := Endpoint(contextName, configPath)
 	if err != nil {
 		return errors.Wrap(err, "get endpoint")
+	}
+
+	// Skip verification for SSH tunnels in remote Docker contexts
+	// When using remote Docker contexts, the kubeconfig will point to localhost tunnels
+	// while the expected endpoint is the remote container's direct endpoint
+	if oci.IsRemoteDockerContext() && oci.IsSSHDockerContext() {
+		if gotHost == "localhost" || gotHost == "127.0.0.1" {
+			klog.V(3).Infof("Skipping endpoint verification for SSH tunnel: got %s:%d, expected %s:%d", gotHost, gotPort, host, port)
+			return nil
+		}
 	}
 
 	if host != gotHost || port != gotPort {

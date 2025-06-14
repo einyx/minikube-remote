@@ -29,6 +29,7 @@ import (
 	"k8s.io/minikube/pkg/minikube/node"
 	"k8s.io/minikube/pkg/minikube/out"
 	"k8s.io/minikube/pkg/minikube/reason"
+	"k8s.io/minikube/pkg/drivers/kic/oci"
 )
 
 var nativeSSHClient bool
@@ -56,7 +57,13 @@ var sshCmd = &cobra.Command{
 			}
 		}
 
-		err = machine.CreateSSHShell(co.API, *co.Config, *n, args, nativeSSHClient)
+		// For remote Docker contexts, use docker exec instead of SSH
+		if co.Config.Driver == driver.Docker && oci.IsRemoteDockerContext() {
+			err = oci.CreateSSHTerminal(config.MachineName(*co.Config, *n), args)
+		} else {
+			err = machine.CreateSSHShell(co.API, *co.Config, *n, args, nativeSSHClient)
+		}
+		
 		if err != nil {
 			// This is typically due to a non-zero exit code, so no need for flourish.
 			out.ErrLn("ssh: %v", err)
