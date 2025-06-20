@@ -42,6 +42,7 @@ import (
 	"k8s.io/minikube/pkg/minikube/command"
 	"k8s.io/minikube/pkg/minikube/config"
 	"k8s.io/minikube/pkg/minikube/cruntime"
+	"k8s.io/minikube/pkg/drivers/kic/oci"
 	"k8s.io/minikube/pkg/minikube/localpath"
 	"k8s.io/minikube/pkg/util/retry"
 	kconst "k8s.io/minikube/third_party/kubeadm/app/constants"
@@ -237,7 +238,14 @@ func apiServerHealthz(hostname string, port int) (state.State, error) {
 		return nil
 	}
 
-	err = retry.Local(check, 15*time.Second)
+	// Use longer retry duration for SSH tunnel connections due to additional latency
+	retryDuration := 15 * time.Second
+	if oci.IsRemoteDockerContext() && oci.IsSSHDockerContext() {
+		retryDuration = 45 * time.Second // 3x longer for SSH tunnels
+		klog.Infof("Using extended retry duration (%v) for SSH tunnel connection", retryDuration)
+	}
+
+	err = retry.Local(check, retryDuration)
 
 	// Don't propagate 'Stopped' upwards as an error message, as clients may interpret the err
 	// as an inability to get status. We need it for retry.Local, however.
@@ -262,7 +270,15 @@ func apiServerHealthzNow(hostname string, port int) (state.State, error) {
 		Proxy:           nil, // Avoid using a proxy to speak to a local host
 		TLSClientConfig: &tls.Config{RootCAs: pool},
 	}
-	client := &http.Client{Transport: tr, Timeout: 5 * time.Second}
+	
+	// Use longer timeout for SSH tunnel connections due to additional latency
+	timeout := 5 * time.Second
+	if oci.IsRemoteDockerContext() && oci.IsSSHDockerContext() {
+		timeout = 15 * time.Second // 3x longer for SSH tunnels
+		klog.Infof("Using extended HTTP timeout (%v) for SSH tunnel connection", timeout)
+	}
+	
+	client := &http.Client{Transport: tr, Timeout: timeout}
 	resp, err := client.Get(url)
 	// Connection refused, usually.
 	if err != nil {

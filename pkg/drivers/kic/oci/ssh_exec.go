@@ -26,13 +26,17 @@ import (
 
 // CreateSSHTerminal creates an interactive SSH-like terminal to the container
 func CreateSSHTerminal(containerName string, args []string) error {
+	klog.Warningf("CreateSSHTerminal called for container %s with args %v", containerName, args)
+	klog.Warningf("IsRemoteDockerContext(): %v", IsRemoteDockerContext())
+	
 	if !IsRemoteDockerContext() {
 		// For local Docker, use standard SSH
+		klog.Infof("Not using remote Docker context, falling back to standard SSH")
 		return nil
 	}
 
 	// For remote Docker contexts, use docker exec
-	klog.Infof("Using docker exec for SSH-like access to remote container %s", containerName)
+	klog.Warningf("Using docker exec for SSH-like access to remote container %s", containerName)
 	
 	cmdArgs := []string{"exec"}
 	
@@ -59,5 +63,6 @@ func CreateSSHTerminal(containerName string, args []string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	
+	klog.Warningf("Executing docker command: %s %v", Docker, cmdArgs)
 	return cmd.Run()
 }

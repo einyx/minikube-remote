@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"path"
 	"strings"
@@ -145,6 +146,27 @@ func (r *DockerExecRunner) WaitCmd(sc *StartedCmd) (*RunResult, error) {
 func (r *DockerExecRunner) Copy(f assets.CopyableFile) error {
 	dst := path.Join(f.GetTargetDir(), f.GetTargetName())
 	src := f.GetSourcePath()
+	
+	// Handle memory assets by writing to temp file first
+	if src == assets.MemorySource {
+		klog.Infof("docker cp memory asset --> %s:%s", r.containerName, dst)
+		tf, err := os.CreateTemp("", "tmpf-memory-asset")
+		if err != nil {
+			return errors.Wrap(err, "creating temporary file")
+		}
+		defer os.Remove(tf.Name())
+		defer tf.Close()
+		
+		// Write content to temp file
+		if _, err := io.Copy(tf, f); err != nil {
+			return errors.Wrap(err, "copying memory asset to temp file")
+		}
+		if err := tf.Close(); err != nil {
+			return errors.Wrap(err, "closing temp file")
+		}
+		
+		src = tf.Name()
+	}
 	
 	klog.Infof("docker cp %s --> %s:%s", src, r.containerName, dst)
 	

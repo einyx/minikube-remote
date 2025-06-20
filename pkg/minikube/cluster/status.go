@@ -35,6 +35,7 @@ import (
 	"k8s.io/minikube/pkg/minikube/config"
 	"k8s.io/minikube/pkg/minikube/constants"
 	"k8s.io/minikube/pkg/minikube/driver"
+	"k8s.io/minikube/pkg/drivers/kic/oci"
 	"k8s.io/minikube/pkg/minikube/kubeconfig"
 	"k8s.io/minikube/pkg/minikube/localpath"
 	"k8s.io/minikube/pkg/minikube/machine"
@@ -457,6 +458,18 @@ func NodeStatus(api libmachine.API, cc config.ClusterConfig, n config.Node) (*St
 	} else if err := kubeconfig.VerifyEndpoint(cc.Name, hostname, port, ""); err != nil && st.Host != state.Starting.String() {
 		klog.Errorf("kubeconfig endpoint: %v", err)
 		st.Kubeconfig = Misconfigured
+	}
+
+	// For remote SSH contexts, check if we should use a tunnel endpoint
+	if driver.IsKIC(cc.Driver) && oci.IsRemoteDockerContext() && oci.IsSSHDockerContext() {
+		// Check current kubeconfig to see if it's using a tunnel
+		kcEndpoint, kcPort, err := kubeconfig.Endpoint(cc.Name, kubeconfig.PathFromEnv())
+		if err == nil && (kcEndpoint == "localhost" || kcEndpoint == "127.0.0.1" || kcEndpoint == "::1") {
+			// This is a tunnel endpoint, use it for status check
+			hostname = kcEndpoint
+			port = kcPort
+			klog.Infof("Using SSH tunnel endpoint from kubeconfig for status check: %s:%d", hostname, port)
+		}
 	}
 
 	sta, err := kverify.APIServerStatus(cr, hostname, port)

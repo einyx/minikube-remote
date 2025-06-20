@@ -189,6 +189,8 @@ func PreloadExists(k8sVersion, containerRuntime, driverName string, forcePreload
 	}
 
 	// Omit remote check if tarball exists locally
+	// NOTE: This is checking for the default architecture tarball, not architecture-specific
+	// The architecture-specific check is handled by PreloadExistsWithArch
 	targetPath := TarballPath(k8sVersion, containerRuntime)
 	if f, err := checkCache(targetPath); err == nil && f.Size() != 0 {
 		klog.Infof("Found local preload: %s", targetPath)

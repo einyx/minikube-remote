@@ -30,6 +30,7 @@ import (
 	"k8s.io/minikube/pkg/minikube/out"
 	"k8s.io/minikube/pkg/minikube/reason"
 	"k8s.io/minikube/pkg/drivers/kic/oci"
+	"k8s.io/klog/v2"
 )
 
 var nativeSSHClient bool
@@ -58,9 +59,12 @@ var sshCmd = &cobra.Command{
 		}
 
 		// For remote Docker contexts, use docker exec instead of SSH
+		klog.Warningf("SSH Command: Driver=%s, IsRemoteDockerContext=%v", co.Config.Driver, oci.IsRemoteDockerContext())
 		if co.Config.Driver == driver.Docker && oci.IsRemoteDockerContext() {
+			klog.Warningf("Using CreateSSHTerminal for remote Docker context")
 			err = oci.CreateSSHTerminal(config.MachineName(*co.Config, *n), args)
 		} else {
+			klog.Warningf("Using standard SSH shell")
 			err = machine.CreateSSHShell(co.API, *co.Config, *n, args, nativeSSHClient)
 		}
 		

@@ -223,16 +223,14 @@ func (d *Driver) Create() error {
 		return errors.Wrap(err, "create kic node")
 	}
 
-	// For remote Docker contexts with SSH, establish SSH tunnel immediately after container creation
+	// For remote Docker contexts with SSH, ensure SSH tunnel is established
 	if oci.IsRemoteDockerContext() && oci.IsSSHDockerContext() {
-		klog.Infof("Setting up SSH tunnel for remote Docker container %s", d.MachineName)
-		tunnelPort, err := oci.EstablishSSHTunnelForContainer(d.MachineName, constants.SSHPort)
-		if err != nil {
-			klog.Warningf("Failed to establish SSH tunnel for container %s: %v", d.MachineName, err)
-			// Don't fail here, as the tunnel might be established later
-		} else {
-			klog.Infof("SSH tunnel established for container %s: localhost:%d", d.MachineName, tunnelPort)
+		klog.Warningf("TUNNEL SETUP: Ensuring SSH access for remote Docker container %s", d.MachineName)
+		if err := oci.EnsureContainerSSHAccess(d.MachineName); err != nil {
+			// SSH tunnel is critical for remote Docker contexts
+			return errors.Wrapf(err, "failed to ensure SSH access for container %s", d.MachineName)
 		}
+		klog.Warningf("TUNNEL SETUP SUCCESS: SSH access ensured for container %s", d.MachineName)
 	}
 
 	if err := d.prepareSSH(); err != nil {
@@ -361,6 +359,7 @@ func (d *Driver) GetExternalIP() (string, error) {
 func (d *Driver) GetSSHHostname() (string, error) {
 	// For remote Docker contexts with SSH tunneling, always use localhost
 	if oci.IsRemoteDockerContext() {
+		klog.Infof("GetSSHHostname: Using localhost for remote Docker context")
 		return "127.0.0.1", nil
 	}
 	return oci.DaemonHost(d.DriverName()), nil
@@ -368,11 +367,22 @@ func (d *Driver) GetSSHHostname() (string, error) {
 
 // GetSSHPort returns port for use with ssh
 func (d *Driver) GetSSHPort() (int, error) {
-	// Always get the actual port mapping, even for remote contexts
+	// For remote SSH Docker contexts, return the tunnel port if available
+	if oci.IsRemoteDockerContext() && oci.IsSSHDockerContext() {
+		tunnelPort, err := oci.GetContainerSSHPort(d.MachineName)
+		if err == nil && tunnelPort > 0 {
+			klog.Infof("GetSSHPort: Returning SSH tunnel port %d for %s", tunnelPort, d.MachineName)
+			return tunnelPort, nil
+		}
+		klog.Warningf("GetSSHPort: No SSH tunnel found for %s, will use direct port (may fail)", d.MachineName)
+	}
+	
+	// For local contexts or if tunnel not available, return the direct port
 	p, err := oci.ForwardedPort(d.OCIBinary, d.MachineName, constants.SSHPort)
 	if err != nil {
 		return p, errors.Wrap(err, "get ssh host-port")
 	}
+	klog.Infof("GetSSHPort: Returning Docker port %d for %s", p, d.MachineName)
 	return p, nil
 }
 
@@ -511,13 +521,14 @@ func (d *Driver) Start() error {
 		return errors.Wrapf(oci.ErrExitedUnexpectedly, "container name %q: log: %s", d.MachineName, excerpt)
 	}
 	
-	// Setup SSH tunnel for remote Docker contexts after container is running
+	// Ensure SSH tunnel for remote Docker contexts after container is running
 	if oci.IsRemoteDockerContext() && oci.IsSSHDockerContext() {
-		_, err := oci.EstablishSSHTunnelForContainer(d.MachineName, constants.SSHPort)
-		if err != nil {
-			klog.Warningf("Failed to establish SSH tunnel on Start: %v", err)
+		klog.Warningf("Ensuring SSH tunnel after container start for %s", d.MachineName)
+		if err := oci.EnsureContainerSSHAccess(d.MachineName); err != nil {
+			klog.Errorf("Failed to ensure SSH access on Start: %v", err)
+			// Don't fail start, tunnel might be established later
 		} else {
-			klog.Infof("SSH tunnel established for container %s on restart", d.MachineName)
+			klog.Infof("SSH access ensured for container %s after restart", d.MachineName)
 		}
 		
 		// Also re-establish API server tunnel if needed

@@ -32,8 +32,6 @@ import (
 	"k8s.io/client-go/util/homedir"
 	"k8s.io/klog/v2"
 
-	"k8s.io/minikube/pkg/drivers/kic/oci"
-	"k8s.io/minikube/pkg/minikube/driver"
 	"k8s.io/minikube/pkg/util/retry"
 )
 
@@ -94,22 +92,23 @@ func newSSHHost(d drivers.Driver) (*sshHost, error) {
 	}
 	
 	// For KIC driver with remote Docker context, establish SSH tunnel if needed
-	if driver.IsKIC(d.DriverName()) && oci.IsRemoteDockerContext() && oci.IsSSHDockerContext() {
-		// Extract container name from machine name
-		containerName := d.GetMachineName()
-		klog.Infof("Establishing SSH tunnel for remote Docker container: %s", containerName)
-		
-		tunnelPort, err := oci.EstablishSSHTunnelForContainer(containerName, 22)
-		if err != nil {
-			klog.Warningf("Failed to establish SSH tunnel for container %s: %v", containerName, err)
-			// Fall back to direct connection
-		} else {
-			klog.Infof("SSH tunnel established for container %s: localhost:%d -> remote:%d", containerName, tunnelPort, port)
-			// Use tunnel endpoint
-			ip = "127.0.0.1"
-			port = tunnelPort
-		}
-	}
+	// TODO: Re-enable this once EstablishSSHTunnelForContainer is implemented
+	// if driver.IsKIC(d.DriverName()) && oci.IsRemoteDockerContext() && oci.IsSSHDockerContext() {
+	// 	// Extract container name from machine name
+	// 	containerName := d.GetMachineName()
+	// 	klog.Infof("Establishing SSH tunnel for remote Docker container: %s", containerName)
+	// 	
+	// 	tunnelPort, err := oci.EstablishSSHTunnelForContainer(containerName, 22)
+	// 	if err != nil {
+	// 		klog.Warningf("Failed to establish SSH tunnel for container %s: %v", containerName, err)
+	// 		// Fall back to direct connection
+	// 	} else {
+	// 		klog.Infof("SSH tunnel established for container %s: localhost:%d -> remote:%d", containerName, tunnelPort, port)
+	// 		// Use tunnel endpoint
+	// 		ip = "127.0.0.1"
+	// 		port = tunnelPort
+	// 	}
+	// }
 	
 	return &sshHost{
 		IP:         ip,

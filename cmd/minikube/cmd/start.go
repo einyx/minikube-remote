@@ -113,10 +113,11 @@ func init() {
 
 // startCmd represents the start command
 var startCmd = &cobra.Command{
-	Use:   "start",
-	Short: "Starts a local Kubernetes cluster",
-	Long:  "Starts a local Kubernetes cluster",
-	Run:   runStart,
+	Use:     "start",
+	Aliases: []string{"create"},
+	Short:   "Starts a local Kubernetes cluster",
+	Long:    "Starts a local Kubernetes cluster",
+	Run:     runStart,
 }
 
 // platform generates a user-readable platform message

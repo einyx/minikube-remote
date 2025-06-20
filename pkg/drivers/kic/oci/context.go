@@ -21,6 +21,8 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/docker/cli/cli/config"
 	"github.com/docker/cli/cli/context/docker"
@@ -38,8 +40,61 @@ type ContextInfo struct {
 	TLSData  *store.EndpointTLSData
 }
 
+// contextCache holds cached context information
+type contextCache struct {
+	mu         sync.RWMutex
+	info       *ContextInfo
+	lastCheck  time.Time
+	cacheTTL   time.Duration
+}
+
+var (
+	// Global context cache
+	globalContextCache = &contextCache{
+		cacheTTL: 30 * time.Second, // Cache context info for 30 seconds
+	}
+)
+
 // GetCurrentContext returns information about the current Docker context
 func GetCurrentContext() (*ContextInfo, error) {
+	// Check cache first
+	if cached := globalContextCache.get(); cached != nil {
+		return cached, nil
+	}
+
+	// Load context information
+	info, err := loadCurrentContext()
+	if err != nil {
+		return nil, err
+	}
+
+	// Cache the result
+	globalContextCache.set(info)
+	return info, nil
+}
+
+// get retrieves cached context info if still valid
+func (c *contextCache) get() *ContextInfo {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if c.info != nil && time.Since(c.lastCheck) < c.cacheTTL {
+		return c.info
+	}
+	return nil
+}
+
+// set caches the context info
+func (c *contextCache) set(info *ContextInfo) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.info = info
+	c.lastCheck = time.Now()
+}
+
+// loadCurrentContext loads the current Docker context information
+func loadCurrentContext() (*ContextInfo, error) {
 	// Check if DOCKER_HOST is explicitly set
 	if dockerHost := os.Getenv("DOCKER_HOST"); dockerHost != "" {
 		return parseDockerHost(dockerHost, "environment")
