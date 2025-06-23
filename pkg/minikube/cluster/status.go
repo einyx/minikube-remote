@@ -461,6 +461,8 @@ func NodeStatus(api libmachine.API, cc config.ClusterConfig, n config.Node) (*St
 	}
 
 	// For remote SSH contexts, check if we should use a tunnel endpoint
+	klog.Infof("Checking driver: IsKIC=%v, IsRemoteDockerContext=%v, IsSSHDockerContext=%v", 
+		driver.IsKIC(cc.Driver), oci.IsRemoteDockerContext(), oci.IsSSHDockerContext())
 	if driver.IsKIC(cc.Driver) && oci.IsRemoteDockerContext() && oci.IsSSHDockerContext() {
 		// Check current kubeconfig to see if it's using a tunnel
 		kcEndpoint, kcPort, err := kubeconfig.Endpoint(cc.Name, kubeconfig.PathFromEnv())
@@ -469,6 +471,20 @@ func NodeStatus(api libmachine.API, cc config.ClusterConfig, n config.Node) (*St
 			hostname = kcEndpoint
 			port = kcPort
 			klog.Infof("Using SSH tunnel endpoint from kubeconfig for status check: %s:%d", hostname, port)
+		} else {
+			// For SSH contexts without a tunnel in kubeconfig, check API server from within the container
+			// This allows status to work even when tunnel isn't active
+			klog.Infof("SSH context detected without tunnel endpoint (got %s:%d), will check API server health from within container", hostname, port)
+			// Use the command runner to check health from inside the container
+			sta, err := kverify.APIServerStatusFromContainer(cr, hostname, port)
+			if err != nil {
+				klog.Errorln("Error apiserver status from container:", err)
+				st.APIServer = state.Error.String()
+			} else {
+				klog.Infof("API server status from container check: %s", sta.String())
+				st.APIServer = sta.String()
+			}
+			return st, nil
 		}
 	}
 

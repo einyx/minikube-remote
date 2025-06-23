@@ -53,22 +53,11 @@ func getTargetArchitecture() string {
 	if oci.IsRemoteDockerContext() {
 		klog.Infof("Detected remote Docker context, querying remote daemon architecture")
 		
-		// Get Docker daemon info to determine remote architecture
-		dockerInfo, err := oci.CachedDaemonInfo(oci.Docker)
-		if err != nil {
-			klog.Warningf("Failed to get remote Docker daemon info, falling back to local architecture: %v", err)
-			return runtime.GOARCH
-		}
-		
-		// Convert Docker architecture format to Go architecture format
-		arch := strings.ToLower(dockerInfo.OSType)
-		if arch == "linux" {
-			// For Linux, we need to get the actual architecture from the Docker info
-			// The Architecture field contains values like "x86_64", "aarch64", etc.
-			dockerArch := getDockerArchitecture()
-			if dockerArch != "" {
-				return dockerArch
-			}
+		// Directly get the architecture from Docker daemon
+		dockerArch := getDockerArchitecture()
+		if dockerArch != "" {
+			klog.Infof("Using remote Docker daemon architecture: %s", dockerArch)
+			return dockerArch
 		}
 		
 		klog.Warningf("Could not determine remote architecture, falling back to local architecture")

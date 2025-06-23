@@ -355,7 +355,7 @@ iso-remote-%: deploy/iso/minikube-iso/board/minikube/%/rootfs-overlay/usr/bin/au
 	@echo "Syncing source code to frank..."
 	@rsync -av --delete --exclude 'out/' --exclude '.git/' --exclude 'test-results/' --exclude '.idea/' --exclude '*.swp' . 169.254.1.1:~/minikube-build/
 	@echo "Building ISO on frank (auto-pause already built)..."
-	@ssh 169.254.1.1 "cd ~/minikube-build && export GO111MODULE=on && touch deploy/iso/minikube-iso/board/minikube/$*/rootfs-overlay/usr/bin/auto-pause && make minikube-iso-$*"
+	@ssh 169.254.1.1 "cd ~/minikube-build && export GO111MODULE=on && touch deploy/iso/minikube-iso/board/minikube/$*/rootfs-overlay/usr/bin/auto-pause && make minikube-iso-$* HOSTCC=/usr/bin/gcc-13 HOSTCXX=/usr/bin/g++-13"
 	@echo "Copying ISO back from frank..."
 	@scp 169.254.1.1:~/minikube-build/out/minikube-$*.iso out/
 	@echo "ISO build complete: out/minikube-$*.iso"

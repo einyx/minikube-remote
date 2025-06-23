@@ -162,6 +162,37 @@ func WaitForAPIServerStatus(cr command.Runner, to time.Duration, hostname string
 	return st, err
 }
 
+// APIServerStatusFromContainer checks API server status from within the container
+// This is useful for remote Docker contexts where we can't reach the API server from the host
+func APIServerStatusFromContainer(cr command.Runner, hostname string, port int) (state.State, error) {
+	klog.Infof("Checking apiserver status from within container...")
+
+	// First check if the process is running
+	_, err := APIServerPID(cr)
+	if err != nil {
+		klog.Warningf("stopped: unable to get apiserver pid: %v", err)
+		return state.Stopped, nil
+	}
+
+	// Check health endpoint from within the container
+	url := fmt.Sprintf("https://%s:%d/healthz", hostname, port)
+	cmd := exec.Command("curl", "-k", "-s", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "5", url)
+	rr, err := cr.RunCmd(cmd)
+	if err != nil {
+		klog.Warningf("health check failed: %v", err)
+		return state.Stopped, nil
+	}
+
+	statusCode := strings.TrimSpace(rr.Stdout.String())
+	if statusCode == "200" {
+		klog.Infof("apiserver healthz check returned %s", statusCode)
+		return state.Running, nil
+	}
+
+	klog.Warningf("apiserver healthz returned status code %s", statusCode)
+	return state.Error, nil
+}
+
 // APIServerStatus returns apiserver status in libmachine style state.State
 func APIServerStatus(cr command.Runner, hostname string, port int) (state.State, error) {
 	klog.Infof("Checking apiserver status ...")
