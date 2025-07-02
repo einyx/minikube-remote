@@ -1,0 +1,20 @@
+diff a/pkg/drivers/qemu/qemu.go b/pkg/drivers/qemu/qemu.go	(rejected hunks)
+@@ -54,6 +54,7 @@ import (
+ 
+ const (
+ 	isoFilename        = "boot2docker.iso"
++	serialFileName     = "serial.log"
+ 	privateNetworkName = "docker-machines"
+ 
+ 	defaultSSHUser = "docker"
+@@ -464,6 +465,10 @@ func (d *Driver) Start() error {
+ 			"virtio-9p-pci,id=fs0,fsdev=fsdev0,mount_tag=config-2")
+ 	}
+ 
++	serialPath := d.ResolveStorePath(serialFileName)
++	startCmd = append(startCmd,
++		"-serial", fmt.Sprintf("file:%s", serialPath))
++
+ 	for i := 0; i < d.ExtraDisks; i++ {
+ 		// use a higher index for extra disks to reduce ID collision with current or future
+ 		// low-indexed devices (e.g., firmware, ISO CDROM, cloud config, and network device)

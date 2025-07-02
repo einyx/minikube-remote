@@ -1,0 +1,10 @@
+diff a/pkg/minikube/assets/vm_assets.go b/pkg/minikube/assets/vm_assets.go	(rejected hunks)
+@@ -20,7 +20,7 @@ import (
+ 	"bytes"
+ 	"embed"
+ 	"fmt"
+-	"html/template"
++	"text/template"
+ 	"io"
+ 	"os"
+ 	"path"
